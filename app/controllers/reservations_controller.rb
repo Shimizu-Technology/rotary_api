@@ -1,8 +1,9 @@
 class ReservationsController < ApplicationController
-  # If you have Devise or JWT, you might do before_action :authenticate_user!
+  before_action :authorize_request
 
   def index
-    # Possibly scope by current_user.restaurant_id for multi-tenant
+    # Optionally scope by current_user.restaurant_id to enforce multi-tenancy
+    # e.g. reservations = Reservation.where(restaurant_id: current_user.restaurant_id)
     reservations = Reservation.all
     render json: reservations
   end
@@ -14,7 +15,9 @@ class ReservationsController < ApplicationController
 
   def create
     reservation = Reservation.new(reservation_params)
-    # Possibly assign reservation.restaurant_id = current_user.restaurant_id
+    # Optional enforcement for multi-tenant:
+    # reservation.restaurant_id = current_user.restaurant_id unless current_user.role == 'super_admin'
+
     if reservation.save
       render json: reservation, status: :created
     else

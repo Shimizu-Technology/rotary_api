@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_14_080750) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_14_103606) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -58,14 +58,14 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_14_080750) do
     t.bigint "restaurant_id", null: false
     t.datetime "start_time"
     t.datetime "end_time"
-    t.integer "party_size"
+    t.integer "party_size", default: 1
     t.string "contact_name"
     t.string "contact_phone"
     t.string "contact_email"
     t.decimal "deposit_amount"
-    t.string "reservation_source"
+    t.string "reservation_source", default: "online"
     t.text "special_requests"
-    t.string "status"
+    t.string "status", default: "booked"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["restaurant_id"], name: "index_reservations_on_restaurant_id"
