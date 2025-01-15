@@ -1,14 +1,12 @@
 # app/controllers/reservations_controller.rb
 
 class ReservationsController < ApplicationController
-  # By default, we authorize all actions
   before_action :authorize_request
-
-  # But skip authorization for "create", so guests can create a reservation
+  # Allow anonymous users to create reservations without JWT
   skip_before_action :authorize_request, only: [:create]
 
   def index
-    # Possibly scope to current_user.restaurant_id if you want
+    # Potentially scope to current_user.restaurant_id
     reservations = Reservation.all
     render json: reservations
   end
@@ -19,24 +17,41 @@ class ReservationsController < ApplicationController
   end
 
   def create
-    # If you want *anonymous* reservations as well as multi-tenant logic, you can do:
-    #  - if logged in, enforce your multi-tenant code
-    #  - if not logged in, allow them to pass restaurant_id themselves (or default to 1)
-
+    # Build a new reservation from the incoming params
     @reservation = Reservation.new(reservation_params)
 
+    # If the user is logged in, enforce multi-tenancy
     if current_user
-      # If the user *is* logged in, enforce multi-tenancy unless they’re super_admin
       unless current_user.role == 'super_admin'
         @reservation.restaurant_id = current_user.restaurant_id
       end
     else
-      # If the user is *not* logged in, we do no special enforcement
-      # (You might want to default to a "main" restaurant if none is passed.)
+      # If no user is logged in, default to restaurant ID = 1 if none was passed
       @reservation.restaurant_id ||= 1
     end
 
     if @reservation.save
+      # 1) Send email confirmation if contact_email is present
+      if @reservation.contact_email.present?
+        ReservationMailer.booking_confirmation(@reservation).deliver_later
+      end
+
+      # 2) Send text confirmation if contact_phone is present
+      if @reservation.contact_phone.present?
+        message_body = <<~MSG.squish
+          Hi #{@reservation.contact_name}, your Rotary Sushi reservation is confirmed
+          on #{@reservation.start_time.strftime("%B %d at %I:%M %p")}.
+          We look forward to seeing you!
+        MSG
+
+        # Attempt to send via Clicksend
+        ClicksendClient.send_text_message(
+          to:   @reservation.contact_phone,
+          body: message_body,
+          from: 'RotarySushi'
+        )
+      end
+
       render json: @reservation, status: :created
     else
       render json: { errors: @reservation.errors.full_messages }, status: :unprocessable_entity
@@ -60,8 +75,8 @@ class ReservationsController < ApplicationController
 
   private
 
+  # Strong parameters for reservations
   def reservation_params
-    # restaurant_id, start_time, party_size, etc.
     params.require(:reservation).permit(
       :restaurant_id,
       :start_time,

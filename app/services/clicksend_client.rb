@@ -15,13 +15,16 @@ class ClicksendClient
       return false
     end
 
+    # Basic Auth
     auth = Base64.strict_encode64("#{username}:#{api_key}")
     uri  = URI("#{BASE_URL}/sms/send")
+
+    # Build JSON payload for the API
     payload = {
       messages: [
         {
           source: 'ruby_app',
-          from:   from,   # e.g. 'RotarySushi'
+          from:   from, # e.g. 'RotarySushi'
           body:   body,
           to:     to
         }
@@ -45,6 +48,7 @@ class ClicksendClient
     end
 
     Rails.logger.debug("[ClicksendClient] code=#{response.code}, body=#{response.body}")
+
     if response.code.to_i == 200
       json = JSON.parse(response.body) rescue {}
       if json["response_code"] == "SUCCESS"

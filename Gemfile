@@ -12,6 +12,8 @@ gem 'bcrypt', '~> 3.1.7'
 gem 'jwt', '~> 2.2'
 # Create fake data
 gem 'faker'
+# Allow rails to use the .env file
+gem 'dotenv-rails'
 # Use the Puma web server [https://github.com/puma/puma]
 gem "puma", ">= 5.0"
 # Build JSON APIs with ease [https://github.com/rails/jbuilder]
