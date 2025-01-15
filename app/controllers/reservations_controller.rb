@@ -1,9 +1,10 @@
+# app/controllers/reservations_controller.rb
 class ReservationsController < ApplicationController
   before_action :authorize_request
 
   def index
-    # Optionally scope by current_user.restaurant_id to enforce multi-tenancy
-    # e.g. reservations = Reservation.where(restaurant_id: current_user.restaurant_id)
+    # Possibly scope by current_user.restaurant_id to enforce multi-tenancy:
+    # reservations = Reservation.where(restaurant_id: current_user.restaurant_id)
     reservations = Reservation.all
     render json: reservations
   end
@@ -15,8 +16,11 @@ class ReservationsController < ApplicationController
 
   def create
     reservation = Reservation.new(reservation_params)
-    # Optional enforcement for multi-tenant:
-    # reservation.restaurant_id = current_user.restaurant_id unless current_user.role == 'super_admin'
+
+    # Enforce multi-tenancy unless user is a super_admin:
+    unless current_user.role == 'super_admin'
+      reservation.restaurant_id = current_user.restaurant_id
+    end
 
     if reservation.save
       render json: reservation, status: :created
