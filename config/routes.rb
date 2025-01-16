@@ -12,8 +12,12 @@ Rails.application.routes.draw do
   resources :reservations, only: [:index, :show, :create, :update, :destroy]
   resources :waitlist_entries, only: [:index, :show, :create, :update, :destroy]
 
-  # Now allow index for seat_allocations
-  resources :seat_allocations, only: [:index, :create, :update, :destroy]
+  # Seat_allocations
+  resources :seat_allocations, only: [:index, :create, :update, :destroy] do
+    collection do
+      post :multi_create
+    end
+  end
 
   # Menus & MenuItems
   resources :menus, only: [:index, :show, :create, :update, :destroy]
