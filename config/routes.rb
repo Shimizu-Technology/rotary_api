@@ -9,12 +9,11 @@ Rails.application.routes.draw do
   resources :restaurants, only: [:index, :show, :create, :update, :destroy]
   resources :seat_sections, only: [:index, :show, :create, :update, :destroy]
   resources :seats, only: [:index, :show, :create, :update, :destroy]
-
   resources :reservations, only: [:index, :show, :create, :update, :destroy]
   resources :waitlist_entries, only: [:index, :show, :create, :update, :destroy]
 
-  # If seat_allocations:
-  resources :seat_allocations, only: [:create, :update, :destroy]
+  # Now allow index for seat_allocations
+  resources :seat_allocations, only: [:index, :create, :update, :destroy]
 
   # Menus & MenuItems
   resources :menus, only: [:index, :show, :create, :update, :destroy]
@@ -25,8 +24,4 @@ Rails.application.routes.draw do
 
   # Layouts
   resources :layouts, only: [:index, :show, :create, :update, :destroy]
-
-  # For seats occupancy updates, you might do custom routes:
-  # put "/seats/:id/occupy", to: "seats#occupy"
-  # put "/seats/:id/free",   to: "seats#free"
 end

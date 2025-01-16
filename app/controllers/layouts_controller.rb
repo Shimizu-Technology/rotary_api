@@ -14,12 +14,60 @@ class LayoutsController < ApplicationController
   end
 
   def show
-    layout = Layout.find(params[:id])
+    Rails.logger.debug "LayoutsController#show => injecting occupant info"
+    sections = @layout.sections_data["sections"] || []
+    seat_ids = []
+
+    # Gather seat IDs
+    sections.each do |sec|
+      next unless sec["seats"].is_a?(Array)
+      sec["seats"].each do |seat_hash|
+        seat_ids << seat_hash["id"] if seat_hash["id"].present?
+      end
+    end
+
+    # Active seat_allocations
+    seat_allocations = SeatAllocation
+      .includes(:reservation, :waitlist_entry)
+      .where(seat_id: seat_ids, released_at: nil)
+
+    occupant_map = {}
+    seat_allocations.each do |sa|
+      occupant_map[sa.seat_id] = {
+        occupant_type: sa.reservation_id ? "reservation" : "waitlist",
+        occupant_id: sa.reservation_id || sa.waitlist_entry_id,
+        occupant_name: sa.reservation&.contact_name || sa.waitlist_entry&.contact_name,
+        occupant_party_size: (sa.reservation&.party_size || sa.waitlist_entry&.party_size),
+        allocation_id: sa.id
+      }
+    end
+
+    sections.each do |sec|
+      sec["seats"].each do |seat_hash|
+        seat_id = seat_hash["id"]
+        occ = occupant_map[seat_id]
+        if occ
+          seat_hash["status"] = "occupied"
+          seat_hash["occupant_type"] = occ[:occupant_type]
+          seat_hash["occupant_id"] = occ[:occupant_id]
+          seat_hash["occupant_name"] = occ[:occupant_name]
+          seat_hash["occupant_party_size"] = occ[:occupant_party_size]
+          seat_hash["allocationId"] = occ[:allocation_id]
+        else
+          seat_hash["status"] = "free"
+          seat_hash["occupant_type"] = nil
+          seat_hash["occupant_id"] = nil
+          seat_hash["occupant_name"] = nil
+          seat_hash["occupant_party_size"] = nil
+          seat_hash["allocationId"] = nil
+        end
+      end
+    end
+
     render json: @layout
   end
 
   def create
-    # We expect JSON in `sections_data`
     @layout = Layout.new(layout_params)
     @layout.restaurant_id ||= current_user.restaurant_id unless current_user.role == 'super_admin'
 
