@@ -1,42 +1,58 @@
 # app/controllers/reservations_controller.rb
 
 class ReservationsController < ApplicationController
-  before_action :authorize_request
-  # Allow anonymous users to create reservations without JWT
-  skip_before_action :authorize_request, only: [:create]
+  # For the entire controller, we require a valid JWT (authorize_request),
+  # except we skip it for :create so that an anonymous user can create a reservation.
+  before_action :authorize_request, except: [:create]
 
   def index
-    # Potentially scope to current_user.restaurant_id
-    reservations = Reservation.all
+    # If you want staff/admin to see all reservations for the restaurant:
+    unless current_user && %w[admin staff super_admin].include?(current_user.role)
+      return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
+    end
+
+    # Staff or admin => see reservations for their restaurant:
+    reservations = Reservation.where(restaurant_id: current_user.restaurant_id)
     render json: reservations
   end
 
   def show
+    # If you want to limit to staff/admin only:
+    unless current_user && %w[admin staff super_admin].include?(current_user.role)
+      return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
+    end
+
     reservation = Reservation.find(params[:id])
+    # Optionally ensure it belongs to the same restaurant_id:
+    # if reservation.restaurant_id != current_user.restaurant_id
+    #   return render json: { error: "Not found" }, status: :not_found
+    # end
+
     render json: reservation
   end
 
+  # CREATE = public
+  # (skip_before_action above, so no JWT required)
   def create
-    # Build a new reservation from the incoming params
     @reservation = Reservation.new(reservation_params)
 
-    # If the user is logged in, enforce multi-tenancy
+    # If the user is logged in, use their restaurant_id (unless super_admin)
     if current_user
       unless current_user.role == 'super_admin'
         @reservation.restaurant_id = current_user.restaurant_id
       end
     else
-      # If no user is logged in, default to restaurant ID = 1 if none was passed
+      # If not logged in, fallback to restaurant_id=1 or param if provided
       @reservation.restaurant_id ||= 1
     end
 
     if @reservation.save
-      # 1) Send email confirmation if contact_email is present
+      # 1) Send email confirmation if contact_email present
       if @reservation.contact_email.present?
         ReservationMailer.booking_confirmation(@reservation).deliver_later
       end
 
-      # 2) Send text confirmation if contact_phone is present
+      # 2) Send text confirmation if contact_phone present
       if @reservation.contact_phone.present?
         message_body = <<~MSG.squish
           Hi #{@reservation.contact_name}, your Rotary Sushi reservation is confirmed
@@ -44,7 +60,6 @@ class ReservationsController < ApplicationController
           We look forward to seeing you!
         MSG
 
-        # Attempt to send via Clicksend
         ClicksendClient.send_text_message(
           to:   @reservation.contact_phone,
           body: message_body,
@@ -59,7 +74,12 @@ class ReservationsController < ApplicationController
   end
 
   def update
+    unless current_user && %w[admin staff super_admin].include?(current_user.role)
+      return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
+    end
+
     reservation = Reservation.find(params[:id])
+    # optionally check reservation.restaurant_id == current_user.restaurant_id
     if reservation.update(reservation_params)
       render json: reservation
     else
@@ -68,14 +88,18 @@ class ReservationsController < ApplicationController
   end
 
   def destroy
+    unless current_user && %w[admin staff super_admin].include?(current_user.role)
+      return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
+    end
+
     reservation = Reservation.find(params[:id])
+    # optionally check belongs to same restaurant
     reservation.destroy
     head :no_content
   end
 
   private
 
-  # Strong parameters for reservations
   def reservation_params
     params.require(:reservation).permit(
       :restaurant_id,
