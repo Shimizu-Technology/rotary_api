@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_16_054644) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_16_232648) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -69,6 +69,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_16_054644) do
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["restaurant_id"], name: "index_reservations_on_restaurant_id"
+    t.check_constraint "status::text = ANY (ARRAY['booked'::character varying, 'reserved'::character varying, 'seated'::character varying, 'finished'::character varying, 'canceled'::character varying, 'no_show'::character varying]::text[])", name: "check_reservation_status"
   end
 
   create_table "restaurants", force: :cascade do |t|
@@ -116,6 +117,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_16_054644) do
     t.datetime "updated_at", null: false
     t.integer "capacity", default: 1, null: false
     t.index ["seat_section_id"], name: "index_seats_on_seat_section_id"
+    t.check_constraint "status::text = ANY (ARRAY['free'::character varying, 'occupied'::character varying, 'reserved'::character varying]::text[])", name: "check_seat_status"
   end
 
   create_table "users", force: :cascade do |t|
