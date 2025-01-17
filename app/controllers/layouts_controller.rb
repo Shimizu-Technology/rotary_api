@@ -1,9 +1,9 @@
-# app/controllers/layouts_controller.rb
 class LayoutsController < ApplicationController
   before_action :authorize_request
   before_action :set_layout, only: [:show, :update, :destroy]
 
   def index
+    # Return all layouts for admin, or the user’s restaurant
     if current_user.role == 'super_admin'
       layouts = Layout.all
     else
@@ -32,8 +32,9 @@ class LayoutsController < ApplicationController
     occupant_map = {}
     seat_allocations.each do |sa|
       occupant = sa.reservation || sa.waitlist_entry
-      occupant_status = occupant&.status # "booked", "reserved", "seated", etc.
+      occupant_status = occupant&.status  # "booked", "reserved", "seated", etc.
 
+      # seat status
       seat_status =
         case occupant_status
         when "seated"
@@ -41,16 +42,15 @@ class LayoutsController < ApplicationController
         when "reserved"
           "reserved"
         when "booked", "waiting"
-          "reserved"  # if occupant is 'booked' but seats are allocated, we treat seat as "reserved"
+          "reserved"
         else
-          # fallback => "occupied" or something else
           "occupied"
         end
 
       occupant_map[sa.seat_id] = {
         seat_status: seat_status,
         occupant_type: sa.reservation_id ? "reservation" : "waitlist",
-        occupant_id:   occupant.id,
+        occupant_id: occupant.id,
         occupant_name: occupant.contact_name,
         occupant_party_size: occupant.party_size,
         occupant_status: occupant.status,
@@ -64,19 +64,19 @@ class LayoutsController < ApplicationController
         sid = seat_hash["id"]
         if occupant_map[sid]
           occ = occupant_map[sid]
-          seat_hash["status"]                = occ[:seat_status]
-          seat_hash["occupant_type"]         = occ[:occupant_type]
-          seat_hash["occupant_id"]           = occ[:occupant_id]
-          seat_hash["occupant_name"]         = occ[:occupant_name]
-          seat_hash["occupant_party_size"]   = occ[:occupant_party_size]
-          seat_hash["allocationId"]          = occ[:allocation_id]
+          seat_hash["status"]               = occ[:seat_status]
+          seat_hash["occupant_type"]        = occ[:occupant_type]
+          seat_hash["occupant_id"]          = occ[:occupant_id]
+          seat_hash["occupant_name"]        = occ[:occupant_name]
+          seat_hash["occupant_party_size"]  = occ[:occupant_party_size]
+          seat_hash["allocationId"]         = occ[:allocation_id]
         else
           seat_hash["status"] = "free"
-          seat_hash["occupant_type"] = nil
-          seat_hash["occupant_id"]   = nil
-          seat_hash["occupant_name"] = nil
+          seat_hash["occupant_type"]       = nil
+          seat_hash["occupant_id"]         = nil
+          seat_hash["occupant_name"]       = nil
           seat_hash["occupant_party_size"] = nil
-          seat_hash["allocationId"] = nil
+          seat_hash["allocationId"]        = nil
         end
       end
     end
