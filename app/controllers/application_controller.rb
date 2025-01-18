@@ -1,5 +1,5 @@
+# app/controllers/application_controller.rb
 class ApplicationController < ActionController::API
-  # This method verifies the JWT in the request headers
   def authorize_request
     header = request.headers['Authorization']
     token = header.split(' ').last if header

@@ -34,7 +34,7 @@ class SeatAllocationsController < ApplicationController
       {
         id: alloc.id,
         seat_id: alloc.seat_id,
-        seat_label: alloc.seat.label,
+        seat_label: alloc.seat&.label,  # use safe-navigation incase seat is nil
         occupant_type: occupant_type,
         occupant_name: occupant_name,
         occupant_party_size: occupant_party_size,
@@ -74,19 +74,21 @@ class SeatAllocationsController < ApplicationController
 
     ActiveRecord::Base.transaction do
       if occupant.is_a?(Reservation)
-        # Must not already be seated/finished/canceled/no_show
         if %w[seated finished canceled no_show].include?(occupant.status)
           raise ActiveRecord::Rollback, "Already seated or done."
         end
       else
-        # waitlist occupant
         if %w[seated removed no_show].include?(occupant.status)
           raise ActiveRecord::Rollback, "Already seated or removed."
         end
       end
 
       seat_ids.each do |sid|
-        seat = Seat.find(sid)
+        seat = Seat.find_by(id: sid)
+        unless seat
+          Rails.logger.warn "Seat #{sid} not found in DB. Skipping or raising error."
+          raise ActiveRecord::Rollback, "Seat #{sid} not found in DB."
+        end
         raise ActiveRecord::Rollback, "Seat #{sid} not free" unless seat.status == "free"
 
         seat.update!(status: "occupied")
@@ -130,22 +132,22 @@ class SeatAllocationsController < ApplicationController
 
     ActiveRecord::Base.transaction do
       if occupant.is_a?(Reservation)
-        # if occupant is "booked" => allow them to become "reserved"
-        # block if occupant is already "seated", "finished", etc.
         if %w[seated finished canceled no_show].include?(occupant.status)
           raise ActiveRecord::Rollback, "Already seated or done."
         end
-        occupant.update!(status: "reserved")  # occupant => "reserved"
+        occupant.update!(status: "reserved")
       else
-        # waitlist occupant
         if %w[seated removed no_show].include?(occupant.status)
           raise ActiveRecord::Rollback, "Already seated or removed."
         end
-        occupant.update!(status: "reserved") # or keep them "waiting" if you prefer
+        occupant.update!(status: "reserved")
       end
 
       seat_ids.each do |sid|
-        seat = Seat.find(sid)
+        seat = Seat.find_by(id: sid)
+        unless seat
+          raise ActiveRecord::Rollback, "Seat #{sid} not found in DB."
+        end
         raise ActiveRecord::Rollback, "Seat #{sid} not free" unless seat.status == "free"
 
         seat.update!(status: "reserved")
@@ -161,10 +163,7 @@ class SeatAllocationsController < ApplicationController
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
-  # ------------------------------------------------------------------
-  # occupant => "seated", seats => "occupied" (if occupant was reserved)
   # POST /seat_allocations/arrive
-  # ------------------------------------------------------------------
   def arrive
     occ_params = params.permit(:occupant_type, :occupant_id)
     occupant_type = occ_params[:occupant_type]
@@ -183,12 +182,10 @@ class SeatAllocationsController < ApplicationController
 
     ActiveRecord::Base.transaction do
       if occupant.is_a?(Reservation)
-        # occupant must be "reserved" or "booked" to seat them
         unless %w[reserved booked].include?(occupant.status)
           raise ActiveRecord::Rollback, "Occupant not in reserved/booked state"
         end
       else
-        # waitlist occupant => "waiting"/"reserved"
         unless %w[waiting reserved].include?(occupant.status)
           raise ActiveRecord::Rollback, "Occupant not in waiting/reserved"
         end
@@ -203,7 +200,6 @@ class SeatAllocationsController < ApplicationController
 
       occupant_allocs.each do |alloc|
         seat = alloc.seat
-        # seat must be "reserved"
         raise ActiveRecord::Rollback, "Seat #{seat.id} not reserved" unless seat.status == "reserved"
         seat.update!(status: "occupied")
       end
@@ -217,11 +213,7 @@ class SeatAllocationsController < ApplicationController
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
-  # ------------------------------------------------------------------
-  # occupant => "no_show", seats => "free"
   # POST /seat_allocations/no_show
-  # occupant never arrived
-  # ------------------------------------------------------------------
   def no_show
     ns_params = params.permit(:occupant_type, :occupant_id)
     occupant_type = ns_params[:occupant_type]
@@ -261,11 +253,7 @@ class SeatAllocationsController < ApplicationController
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
-  # ------------------------------------------------------------------
-  # occupant => "canceled", seats => "free"
   # POST /seat_allocations/cancel
-  # occupant canceled in advance
-  # ------------------------------------------------------------------
   def cancel
     c_params = params.permit(:occupant_type, :occupant_id)
     occupant_type = c_params[:occupant_type]
@@ -291,8 +279,7 @@ class SeatAllocationsController < ApplicationController
         end
 
       occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        seat.update!(status: "free")
+        alloc.seat.update!(status: "free")
         alloc.update!(released_at: Time.current)
       end
 
@@ -305,11 +292,7 @@ class SeatAllocationsController < ApplicationController
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
-  # ------------------------------------------------------------------
-  # occupant => "finished"/"removed", seat => "free"
   # DELETE /seat_allocations/:id
-  # Typically used if occupant actually finished dining
-  # ------------------------------------------------------------------
   def destroy
     seat_allocation = SeatAllocation.find(params[:id])
     occupant = seat_allocation.reservation || seat_allocation.waitlist_entry

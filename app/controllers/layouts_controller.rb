@@ -3,7 +3,7 @@ class LayoutsController < ApplicationController
   before_action :set_layout, only: [:show, :update, :destroy]
 
   def index
-    # Return all layouts for admin, or the user’s restaurant
+    # Return all layouts for super_admin, or the user’s restaurant
     if current_user.role == 'super_admin'
       layouts = Layout.all
     else
@@ -17,7 +17,7 @@ class LayoutsController < ApplicationController
     sections = @layout.sections_data["sections"] || []
     seat_ids = []
 
-    # gather seat IDs from sections
+    # Gather seat IDs from sections
     sections.each do |sec|
       next unless sec["seats"].is_a?(Array)
       sec["seats"].each do |seat_hash|
@@ -25,16 +25,25 @@ class LayoutsController < ApplicationController
       end
     end
 
+    # Possibly filter out or log seats that are missing:
+    existing_seat_ids = Seat.where(id: seat_ids).pluck(:id)
+    if existing_seat_ids.size < seat_ids.size
+      missing_ids = seat_ids - existing_seat_ids
+      Rails.logger.warn "Some seats in layout JSON are missing from DB: #{missing_ids.inspect}"
+      # Optionally remove or mark them
+      # For now, we’ll keep them, but your choice:
+      # seat_ids = existing_seat_ids
+    end
+
     seat_allocations = SeatAllocation
       .includes(:reservation, :waitlist_entry)
-      .where(seat_id: seat_ids, released_at: nil)
+      .where(seat_id: existing_seat_ids, released_at: nil)
 
     occupant_map = {}
     seat_allocations.each do |sa|
       occupant = sa.reservation || sa.waitlist_entry
       occupant_status = occupant&.status  # "booked", "reserved", "seated", etc.
 
-      # seat status
       seat_status =
         case occupant_status
         when "seated"
@@ -42,8 +51,11 @@ class LayoutsController < ApplicationController
         when "reserved"
           "reserved"
         when "booked", "waiting"
+          # If occupant is "booked/waiting" but seat is allocated,
+          # you might treat seat as "reserved" too
           "reserved"
         else
+          # fallback => "occupied" if occupant is in some other state
           "occupied"
         end
 

@@ -15,11 +15,11 @@ Rails.application.routes.draw do
   # SeatAllocations
   resources :seat_allocations, only: [:index, :create, :update, :destroy] do
     collection do
-      post :multi_create    # occupant => seated
-      post :reserve        # occupant => reserved
-      post :arrive         # occupant => 'seated' from 'reserved'
-      post :no_show        # occupant => 'no_show'
-      post :cancel         # occupant => 'canceled'
+      post :multi_create
+      post :reserve
+      post :arrive
+      post :no_show
+      post :cancel
     end
   end
 
