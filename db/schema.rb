@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_16_232648) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_18_032754) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -101,10 +101,10 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_16_232648) do
     t.integer "offset_x"
     t.integer "offset_y"
     t.integer "capacity"
-    t.bigint "restaurant_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["restaurant_id"], name: "index_seat_sections_on_restaurant_id"
+    t.bigint "layout_id", null: false
+    t.index ["layout_id"], name: "index_seat_sections_on_layout_id"
   end
 
   create_table "seats", force: :cascade do |t|
@@ -152,7 +152,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_16_232648) do
   add_foreign_key "seat_allocations", "reservations"
   add_foreign_key "seat_allocations", "seats"
   add_foreign_key "seat_allocations", "waitlist_entries"
-  add_foreign_key "seat_sections", "restaurants"
+  add_foreign_key "seat_sections", "layouts"
   add_foreign_key "seats", "seat_sections"
   add_foreign_key "users", "restaurants"
   add_foreign_key "waitlist_entries", "restaurants"

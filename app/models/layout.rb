@@ -1,11 +1,12 @@
 # app/models/layout.rb
 class Layout < ApplicationRecord
   belongs_to :restaurant
-
-  # We'll store seat-sections data in sections_data (a JSON or JSONB column).
-  # Something like: { sections: [ { id: "1", name: "Left Counter", ... } ], active: true, etc. }
-  # Make sure you've added appropriate validations if needed.
-
-  # Example validation:
-  validates :sections_data, presence: true
+  
+  # Let each layout own many seat_sections
+  has_many :seat_sections, dependent: :destroy
+  
+  # If you store seat-sections in a JSON, that's separate from the real DB link.
+  # But your code can still rely on seat_sections being physically in the DB.
+  
+  # validates :sections_data, presence: true
 end
