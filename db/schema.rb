@@ -10,14 +10,14 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_18_032754) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_19_040337) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
   create_table "layouts", force: :cascade do |t|
     t.string "name"
     t.bigint "restaurant_id", null: false
-    t.jsonb "sections_data"
+    t.jsonb "sections_data", default: {"sections"=>[]}
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["restaurant_id"], name: "index_layouts_on_restaurant_id"
