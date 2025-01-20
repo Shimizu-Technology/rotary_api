@@ -1,5 +1,3 @@
-# config/routes.rb
-
 Rails.application.routes.draw do
   # Authentication
   post '/signup', to: 'users#create'
@@ -12,7 +10,6 @@ Rails.application.routes.draw do
   resources :reservations, only: [:index, :show, :create, :update, :destroy]
   resources :waitlist_entries, only: [:index, :show, :create, :update, :destroy]
 
-  # SeatAllocations
   resources :seat_allocations, only: [:index, :create, :update, :destroy] do
     collection do
       post :multi_create
@@ -24,13 +21,17 @@ Rails.application.routes.draw do
     end
   end
 
-  # Menus & Items
   resources :menus, only: [:index, :show, :create, :update, :destroy]
   resources :menu_items, only: [:index, :show, :create, :update, :destroy]
-
-  # Notifications
   resources :notifications, only: [:index, :show, :create, :update, :destroy]
 
   # Layouts
-  resources :layouts, only: [:index, :show, :create, :update, :destroy]
+  resources :layouts, only: [:index, :show, :create, :update, :destroy] do
+    member do
+      post :activate
+    end
+  end
+
+  # Availability route
+  get '/availability', to: 'availability#index'
 end

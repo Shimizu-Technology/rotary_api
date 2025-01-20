@@ -1,7 +1,8 @@
 # app/controllers/layouts_controller.rb
+
 class LayoutsController < ApplicationController
   before_action :authorize_request
-  before_action :set_layout, only: [:show, :update, :destroy]
+  before_action :set_layout, only: [:show, :update, :destroy, :activate]
 
   # GET /layouts
   def index
@@ -16,33 +17,28 @@ class LayoutsController < ApplicationController
   # GET /layouts/:id
   # Returns expanded seat data under "seat_sections."
   def show
-    # Load seat_sections (and seats) from the DB
     seat_sections = @layout.seat_sections.includes(:seats)
 
-    # Optionally load occupant info for each seat
     seat_allocations = SeatAllocation
       .includes(:reservation, :waitlist_entry)
       .where(seat_id: seat_sections.flat_map(&:seats).pluck(:id), released_at: nil)
 
-    # occupant_map[ seat.id ] = { occupant_type, occupant_name, etc. }
     occupant_map = {}
     seat_allocations.each do |alloc|
       occupant = alloc.reservation || alloc.waitlist_entry
       occupant_map[alloc.seat_id] = {
-        occupant_type:    (alloc.reservation_id ? "reservation" : "waitlist"),
-        occupant_name:    occupant.contact_name,
+        occupant_type:      (alloc.reservation_id ? "reservation" : "waitlist"),
+        occupant_name:      occupant.contact_name,
         occupant_party_size: occupant.try(:party_size),
-        occupant_status:  occupant.status
+        occupant_status:    occupant.status
       }
     end
 
     data = {
       id:   @layout.id,
       name: @layout.name,
-      # We can still return @layout.sections_data for reference
       sections_data: @layout.sections_data,
 
-      # seat_sections => each with seats + occupant info
       seat_sections: seat_sections.map do |sec|
         {
           id:         sec.id,
@@ -52,15 +48,13 @@ class LayoutsController < ApplicationController
           orientation: sec.orientation,
           seats: sec.seats.map do |seat|
             occ = occupant_map[seat.id]
-            # We no longer have seat.status in the DB, 
-            # so let's “fake” it as "occupied" if there's an occupant, or "free" otherwise
             {
-              id:          seat.id,
-              label:       seat.label,
-              position_x:  seat.position_x,
-              position_y:  seat.position_y,
-              capacity:    seat.capacity,
-              status:      occ ? "occupied" : "free",  # purely for UI convenience
+              id:         seat.id,
+              label:      seat.label,
+              position_x: seat.position_x,
+              position_y: seat.position_y,
+              capacity:   seat.capacity,
+              status:     occ ? "occupied" : "free",  # purely for UI
               occupant_info: occ
             }
           end
@@ -89,7 +83,6 @@ class LayoutsController < ApplicationController
 
     ActiveRecord::Base.transaction do
       if @layout.save!
-        # Parse the seat/section data out of the JSON
         sections_array = layout_params.dig(:sections_data, :sections) || []
         section_ids_in_use = []
 
@@ -97,15 +90,13 @@ class LayoutsController < ApplicationController
           existing_section_id = sec_data["id"].to_i if sec_data["id"].to_s.match?(/^\d+$/)
           seat_section = nil
 
-          # If the client passes a numeric "id" for seat_section, 
-          # we check if it's an existing record. Usually brand-new means none found.
           if existing_section_id && existing_section_id > 0
             seat_section = @layout.seat_sections.find_by(id: existing_section_id)
           end
 
           seat_section ||= @layout.seat_sections.build
           seat_section.name         = sec_data["name"]
-          seat_section.section_type = sec_data["type"]        # or sec_data["section_type"]
+          seat_section.section_type = sec_data["type"]  # or sec_data["section_type"]
           seat_section.orientation  = sec_data["orientation"]
           seat_section.offset_x     = sec_data["offsetX"]
           seat_section.offset_y     = sec_data["offsetY"]
@@ -113,7 +104,6 @@ class LayoutsController < ApplicationController
 
           section_ids_in_use << seat_section.id
 
-          # Create or update seats
           seats_array = sec_data["seats"] || []
           seat_ids_in_use = []
 
@@ -129,18 +119,15 @@ class LayoutsController < ApplicationController
             seat.label       = seat_data["label"]
             seat.position_x  = seat_data["position_x"]
             seat.position_y  = seat_data["position_y"]
-            # Removed => seat.status = seat_data["status"]
             seat.capacity    = seat_data["capacity"] || 1
             seat.save!
 
             seat_ids_in_use << seat.id
           end
 
-          # Remove seats that no longer exist in the array
           seat_section.seats.where.not(id: seat_ids_in_use).destroy_all
         end
 
-        # Remove seat_sections that were deleted client side
         @layout.seat_sections.where.not(id: section_ids_in_use).destroy_all
 
         @layout.save!
@@ -155,7 +142,6 @@ class LayoutsController < ApplicationController
   end
 
   # PATCH/PUT /layouts/:id
-  # Also updates seat_sections/seats from the JSON in layout_params[:sections_data].
   def update
     if current_user.role != 'super_admin'
       @layout.restaurant_id = current_user.restaurant_id
@@ -204,18 +190,15 @@ class LayoutsController < ApplicationController
           seat.label       = seat_data["label"]
           seat.position_x  = seat_data["position_x"]
           seat.position_y  = seat_data["position_y"]
-          # Removed => seat.status = seat_data["status"]
           seat.capacity    = seat_data["capacity"] || 1
           seat.save!
 
           seat_ids_in_use << seat.id
         end
 
-        # Remove seats that no longer exist in the array
         seat_section.seats.where.not(id: seat_ids_in_use).destroy_all
       end
 
-      # Remove seat_sections that were deleted on the client
       @layout.seat_sections.where.not(id: section_ids_in_use).destroy_all
 
       @layout.save!
@@ -233,6 +216,29 @@ class LayoutsController < ApplicationController
     head :no_content
   end
 
+  # ------------------------------------------------------------------
+  # POST /layouts/:id/activate
+  # => sets restaurant.current_layout_id = this layout
+  # ------------------------------------------------------------------
+  def activate
+    # Only super_admin or staff of the same restaurant can do this
+    # Adjust authorization as needed
+    unless current_user.role.in?(%w[admin staff super_admin])
+      return render json: { error: "Forbidden" }, status: :forbidden
+    end
+
+    # Ensure this layout belongs to the same restaurant
+    if @layout.restaurant_id != current_user.restaurant_id && current_user.role != 'super_admin'
+      return render json: { error: "Layout does not belong to your restaurant" }, status: :forbidden
+    end
+
+    @layout.restaurant.update!(current_layout_id: @layout.id)
+
+    render json: {
+      message: "Layout #{@layout.name} (ID #{@layout.id}) is now active for Restaurant #{@layout.restaurant_id}"
+    }, status: :ok
+  end
+
   private
 
   def set_layout
@@ -240,7 +246,6 @@ class LayoutsController < ApplicationController
   end
 
   def layout_params
-    # We no longer expect seat "status," so no references to it here.
     params.require(:layout).permit(:name, :restaurant_id, sections_data: {})
   end
 end

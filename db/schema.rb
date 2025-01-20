@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_20_041057) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_20_140918) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -79,16 +79,22 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_20_041057) do
     t.string "layout_type"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.bigint "current_layout_id"
+    t.time "opening_time"
+    t.time "closing_time"
+    t.integer "time_slot_interval", default: 30
+    t.index ["current_layout_id"], name: "index_restaurants_on_current_layout_id"
   end
 
   create_table "seat_allocations", force: :cascade do |t|
     t.bigint "reservation_id"
     t.bigint "seat_id", null: false
-    t.datetime "allocated_at"
+    t.datetime "start_time"
     t.datetime "released_at"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.bigint "waitlist_entry_id"
+    t.datetime "end_time"
     t.index ["reservation_id"], name: "index_seat_allocations_on_reservation_id"
     t.index ["seat_id"], name: "index_seat_allocations_on_seat_id"
     t.index ["waitlist_entry_id"], name: "index_seat_allocations_on_waitlist_entry_id"
@@ -147,6 +153,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_20_041057) do
   add_foreign_key "menus", "restaurants"
   add_foreign_key "notifications", "reservations"
   add_foreign_key "reservations", "restaurants"
+  add_foreign_key "restaurants", "layouts", column: "current_layout_id", on_delete: :nullify
   add_foreign_key "seat_allocations", "reservations"
   add_foreign_key "seat_allocations", "seats"
   add_foreign_key "seat_allocations", "waitlist_entries"
