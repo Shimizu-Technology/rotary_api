@@ -4,12 +4,35 @@ class SeatAllocationsController < ApplicationController
   before_action :authorize_request
 
   # GET /seat_allocations
-  # Returns occupant info (occupant_id, occupant_name, occupant_status, etc.)
   def index
-    Rails.logger.debug "===== [SeatAllocationsController#index] listing all seat allocations"
-    seat_allocations = SeatAllocation
-      .includes(:seat, :reservation, :waitlist_entry)
-      .all
+    Rails.logger.debug "===== [SeatAllocationsController#index] listing seat allocations with params=#{params.inspect}"
+
+    # Start with active seat_allocations (not released)
+    base = SeatAllocation.includes(:seat, :reservation, :waitlist_entry)
+                         .where(released_at: nil)
+
+    # If ?date=YYYY-MM-DD is given, we join both occupant tables
+    # and keep only seat_allocations where occupant's date matches
+    if params[:date].present?
+      begin
+        date_filter = Date.parse(params[:date])
+
+        base = base
+          .joins("LEFT JOIN reservations ON seat_allocations.reservation_id = reservations.id")
+          .joins("LEFT JOIN waitlist_entries ON seat_allocations.waitlist_entry_id = waitlist_entries.id")
+          .where(%{
+            (seat_allocations.reservation_id IS NOT NULL AND DATE(reservations.start_time) = :df)
+            OR
+            (seat_allocations.waitlist_entry_id IS NOT NULL AND DATE(waitlist_entries.check_in_time) = :df)
+          }, df: date_filter)
+
+      rescue ArgumentError
+        Rails.logger.warn "[SeatAllocationsController#index] invalid date param=#{params[:date]}"
+        # base = base.none
+      end
+    end
+
+    seat_allocations = base.all
 
     results = seat_allocations.map do |alloc|
       occupant_type =

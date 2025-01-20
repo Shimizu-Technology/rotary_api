@@ -1,6 +1,5 @@
 # app/controllers/waitlist_entries_controller.rb
 class WaitlistEntriesController < ApplicationController
-  # For now, require JWT for all actions
   before_action :authorize_request
 
   def index
@@ -9,9 +8,21 @@ class WaitlistEntriesController < ApplicationController
       return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
     end
 
-    # Possibly scope to current_user.restaurant_id:
-    # waitlist = WaitlistEntry.where(restaurant_id: current_user.restaurant_id)
-    waitlist = WaitlistEntry.all
+    # Possibly scope to the current user's restaurant
+    scope = WaitlistEntry.where(restaurant_id: current_user.restaurant_id)
+
+    # If ?date=YYYY-MM-DD is given, filter by date(check_in_time)
+    if params[:date].present?
+      begin
+        date_filter = Date.parse(params[:date])
+        scope = scope.where("DATE(check_in_time) = ?", date_filter)
+      rescue ArgumentError
+        Rails.logger.warn "[WaitlistEntriesController#index] invalid date param=#{params[:date]}"
+        # scope = scope.none
+      end
+    end
+
+    waitlist = scope.all
     render json: waitlist
   end
 
@@ -21,17 +32,14 @@ class WaitlistEntriesController < ApplicationController
     end
 
     entry = WaitlistEntry.find(params[:id])
-    # optionally check same restaurant
     render json: entry
   end
 
   def create
-    # This requires being logged in; you can loosen it if you want guests to join waitlist
-    # If you do want guests to join, skip_before_action :authorize_request, only: [:create]
-
+    # If guests can create waitlist entries, skip :authorize_request or handle differently
     entry = WaitlistEntry.new(waitlist_entry_params)
-    # Enforce multi-tenancy if desired:
-    # entry.restaurant_id = current_user.restaurant_id if current_user.restaurant_id.present?
+    # Force restaurant if desired:
+    entry.restaurant_id = current_user.restaurant_id
 
     if entry.save
       render json: entry, status: :created

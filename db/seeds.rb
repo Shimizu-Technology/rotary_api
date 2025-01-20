@@ -7,7 +7,7 @@
 require 'active_record'
 
 puts "== (Optional) Cleaning references =="
-# Uncomment if you want a truly clean DB each time:
+# Uncomment to truncate tables and reset IDs if needed:
 # ActiveRecord::Base.connection.execute("TRUNCATE reservations, waitlist_entries, users, restaurants, menus, menu_items RESTART IDENTITY CASCADE")
 
 puts "== Seeding the database =="
@@ -45,104 +45,55 @@ end
 puts "Created Regular User: #{regular_user.email} / password"
 
 # 3) Reservations
-# We'll create multiple example reservations with different party sizes and times
-puts "Creating sample Reservations..."
+puts "Creating sample Reservations across multiple days and times..."
 
-Reservation.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Leon Shimizu",
-  start_time: Time.current + 1.day,
-) do |res|
-  res.party_size       = 2
-  res.contact_phone    = "671-483-0219"
-  res.contact_email    = "leon@example.com"
-  res.status           = "booked"   # could be "reserved" or "booked"
-end
+reservation_data = [
+  { name: "Leon Shimizu", time: Time.current + 1.day, party_size: 2, status: "booked" },
+  { name: "Kami Shimizu", time: Time.current + 2.days, party_size: 4, status: "booked" },
+  { name: "Dinner Group", time: Time.current + 2.hours, party_size: 5, status: "booked" },
+  { name: "Late Nighter", time: Time.current + 12.hours, party_size: 3, status: "booked" },
+  { name: "Weekend Brunch", time: Time.current + 5.days + 10.hours, party_size: 6, status: "booked" },
+  { name: "Family Gathering", time: Time.current + 3.days + 8.hours, party_size: 8, status: "booked" },
+  { name: "Early Bird Special", time: Time.current + 7.hours, party_size: 2, status: "booked" },
+  { name: "Canceled Example", time: Time.current + 1.day, party_size: 2, status: "canceled" },
+  { name: "No-Show Example", time: Time.current - 1.day, party_size: 3, status: "no_show" },
+  { name: "Finished Party", time: Time.current - 2.days, party_size: 4, status: "finished" }
+]
 
-Reservation.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Kami Shimizu",
-  start_time: Time.current + 2.days,
-) do |res|
-  res.party_size       = 4
-  res.contact_phone    = "671-777-9724"
-  res.contact_email    = "kami@example.com"
-  res.status           = "booked"
-end
-
-Reservation.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Dinner Group",
-  start_time: Time.current + 2.hours,
-) do |res|
-  res.party_size       = 5
-  res.contact_phone    = "671-222-9999"
-  res.contact_email    = "group@example.com"
-  res.status           = "booked"
-end
-
-Reservation.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Late Nighter",
-  start_time: Time.current + 12.hours,
-) do |res|
-  res.party_size       = 3
-  res.contact_phone    = "671-123-4444"
-  res.contact_email    = "night@example.com"
-  res.status           = "booked"
-end
-
-Reservation.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Canceled Example",
-  start_time: Time.current + 1.day,
-) do |res|
-  res.party_size       = 2
-  res.contact_phone    = "671-555-0000"
-  res.contact_email    = "cancel@example.com"
-  res.status           = "canceled"
+reservation_data.each do |res_data|
+  Reservation.find_or_create_by!(
+    restaurant_id: restaurant.id,
+    contact_name: res_data[:name],
+    start_time: res_data[:time]
+  ) do |res|
+    res.party_size = res_data[:party_size]
+    res.contact_phone = "671-#{rand(100..999)}-#{rand(1000..9999)}"
+    res.contact_email = "#{res_data[:name].parameterize}@example.com"
+    res.status = res_data[:status]
+  end
 end
 
 puts "Reservations seeded."
 
 # 4) WaitlistEntries
-# We'll create multiple waitlist entries with different party sizes
-puts "Creating sample Waitlist Entries..."
+puts "Creating sample Waitlist Entries for the current day..."
 
-WaitlistEntry.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Walk-in Joe",
-  check_in_time: Time.current,
-) do |w|
-  w.party_size = 3
-  w.status     = "waiting"
-end
+waitlist_data = [
+  { name: "Walk-in Joe", time: Time.current, party_size: 3, status: "waiting" },
+  { name: "Party of Six", time: Time.current - 30.minutes, party_size: 6, status: "waiting" },
+  { name: "Seated Sarah", time: Time.current - 1.hour, party_size: 2, status: "seated" },
+  { name: "Afternoon Visitor", time: Time.current - 3.hours, party_size: 4, status: "seated" }
+]
 
-WaitlistEntry.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Party of Six",
-  check_in_time: Time.current - 30.minutes,
-) do |w|
-  w.party_size = 6
-  w.status     = "waiting"
-end
-
-WaitlistEntry.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "No-Show Nancy",
-  check_in_time: Time.current - 1.hour,
-) do |w|
-  w.party_size = 2
-  w.status     = "no_show"
-end
-
-WaitlistEntry.find_or_create_by!(
-  restaurant_id: restaurant.id,
-  contact_name: "Reserved Rita",
-  check_in_time: Time.current - 15.minutes,
-) do |w|
-  w.party_size = 4
-  w.status     = "reserved"
+waitlist_data.each do |wl_data|
+  WaitlistEntry.find_or_create_by!(
+    restaurant_id: restaurant.id,
+    contact_name: wl_data[:name],
+    check_in_time: wl_data[:time]
+  ) do |w|
+    w.party_size = wl_data[:party_size]
+    w.status     = wl_data[:status]
+  end
 end
 
 puts "Waitlist entries seeded."
