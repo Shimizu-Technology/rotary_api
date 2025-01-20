@@ -1,3 +1,4 @@
+# app/controllers/seats_controller.rb
 class SeatsController < ApplicationController
   before_action :authorize_request
 
@@ -19,7 +20,8 @@ class SeatsController < ApplicationController
 
   def create
     seat_params = params.require(:seat).permit(
-      :seat_section_id, :label, :position_x, :position_y, :status, :capacity
+      :seat_section_id, :label, :position_x, :position_y, :capacity
+      # We omit :status because we don't use it anymore
     )
     seat = Seat.new(seat_params)
 
@@ -36,7 +38,8 @@ class SeatsController < ApplicationController
     return render json: { error: "Seat not found" }, status: :not_found unless seat
 
     update_params = params.require(:seat).permit(
-      :label, :position_x, :position_y, :status, :capacity
+      :label, :position_x, :position_y, :capacity
+      # omit :status
     )
     if seat.update(update_params)
       render json: seat

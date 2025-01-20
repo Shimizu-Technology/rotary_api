@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_20_011720) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_20_041057) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -111,13 +111,11 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_20_011720) do
     t.string "label"
     t.integer "position_x"
     t.integer "position_y"
-    t.string "status"
     t.bigint "seat_section_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.integer "capacity", default: 1, null: false
     t.index ["seat_section_id"], name: "index_seats_on_seat_section_id"
-    t.check_constraint "status::text = ANY (ARRAY['free'::character varying, 'occupied'::character varying, 'reserved'::character varying]::text[])", name: "check_seat_status"
   end
 
   create_table "users", force: :cascade do |t|

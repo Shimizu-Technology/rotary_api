@@ -1,18 +1,13 @@
 class Seat < ApplicationRecord
   belongs_to :seat_section
+
   has_many :seat_allocations, dependent: :destroy
   has_many :reservations, through: :seat_allocations
   has_many :waitlist_entries, through: :seat_allocations
 
   validates :capacity, numericality: { greater_than: 0 }
-  # 'status' check constraint ensures only free, occupied, or reserved
 
-  # Default status to "free" on creation
-  after_initialize do
-    self.status ||= "free"
-  end
-
-  # Optional debug callbacks
+  # Optional debug callbacks (just removing references to status)
   before_validation :debug_before_validation
   after_validation :debug_after_validation
   after_create :debug_after_create

@@ -1,34 +1,32 @@
-# app/controllers/seat_allocations_controller.rb
-
 class SeatAllocationsController < ApplicationController
   before_action :authorize_request
 
   # GET /seat_allocations
+  #
+  # Returns all active seat_allocations (where released_at is nil).
+  # If ?date=YYYY-MM-DD is specified, filters to only seat_allocations
+  # with occupant's date = that day.
   def index
     Rails.logger.debug "===== [SeatAllocationsController#index] listing seat allocations with params=#{params.inspect}"
 
-    # Start with active seat_allocations (not released)
-    base = SeatAllocation.includes(:seat, :reservation, :waitlist_entry)
-                         .where(released_at: nil)
+    base = SeatAllocation
+      .includes(:seat, :reservation, :waitlist_entry)
+      .where(released_at: nil)
 
-    # If ?date=YYYY-MM-DD is given, we join both occupant tables
-    # and keep only seat_allocations where occupant's date matches
     if params[:date].present?
       begin
         date_filter = Date.parse(params[:date])
-
+        # Join occupant tables to match occupant date
         base = base
-          .joins("LEFT JOIN reservations ON seat_allocations.reservation_id = reservations.id")
-          .joins("LEFT JOIN waitlist_entries ON seat_allocations.waitlist_entry_id = waitlist_entries.id")
+          .joins("LEFT JOIN reservations r ON seat_allocations.reservation_id = r.id")
+          .joins("LEFT JOIN waitlist_entries w ON seat_allocations.waitlist_entry_id = w.id")
           .where(%{
-            (seat_allocations.reservation_id IS NOT NULL AND DATE(reservations.start_time) = :df)
+            (seat_allocations.reservation_id IS NOT NULL AND DATE(r.start_time) = :df)
             OR
-            (seat_allocations.waitlist_entry_id IS NOT NULL AND DATE(waitlist_entries.check_in_time) = :df)
+            (seat_allocations.waitlist_entry_id IS NOT NULL AND DATE(w.check_in_time) = :df)
           }, df: date_filter)
-
       rescue ArgumentError
         Rails.logger.warn "[SeatAllocationsController#index] invalid date param=#{params[:date]}"
-        # base = base.none
       end
     end
 
@@ -80,7 +78,10 @@ class SeatAllocationsController < ApplicationController
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/multi_create
-  # => occupant => "seated", seats => "occupied"
+  #
+  # Example usage: occupant => "seated", create multiple seat_allocations
+  # for that occupant. We do NOT mark the seat itself "occupied"—
+  # we simply create seat_allocations if there's no conflict on that occupant's date.
   # ------------------------------------------------------------------
   def multi_create
     sa_params = params.require(:seat_allocation)
@@ -95,39 +96,66 @@ class SeatAllocationsController < ApplicationController
       return render json: { error: "Must provide occupant_type, occupant_id, seat_ids" }, status: :unprocessable_entity
     end
 
-    occupant = (occupant_type == "reservation") \
-      ? Reservation.find_by(id: occupant_id)
-      : WaitlistEntry.find_by(id: occupant_id)
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
 
     unless occupant
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
+    occupant_date = occupant.is_a?(Reservation) ? occupant.start_time&.to_date : occupant.check_in_time&.to_date
+    if occupant_date.nil?
+      return render json: { error: "Occupant missing date/time field" }, status: :unprocessable_entity
+    end
+
     ActiveRecord::Base.transaction do
-      # Mark occupant “seated” unless they were already seated
+      # Mark occupant “seated” (optional logic)
       occupant.update!(status: "seated") unless %w[seated finished canceled no_show removed].include?(occupant.status)
 
       seat_ids.each do |sid|
         seat = Seat.find_by(id: sid)
-        raise ActiveRecord::Rollback, "Seat #{sid} not found" unless seat
-        raise ActiveRecord::Rollback, "Seat #{sid} not free" unless seat.status == "free"
+        raise ActiveRecord::RecordNotFound, "Seat #{sid} not found" unless seat
 
-        seat.update!(status: "occupied")
+        # Check for conflict on occupant_date
+        conflict = SeatAllocation
+          .joins("LEFT JOIN reservations r ON seat_allocations.reservation_id = r.id")
+          .joins("LEFT JOIN waitlist_entries w ON seat_allocations.waitlist_entry_id = w.id")
+          .where(seat_id: sid, released_at: nil)
+          .where("
+            (reservation_id IS NOT NULL AND DATE(r.start_time) = ?)
+             OR
+            (waitlist_entry_id IS NOT NULL AND DATE(w.check_in_time) = ?)
+          ", occupant_date, occupant_date)
+          .exists?
+
+        if conflict
+          raise ActiveRecord::RecordInvalid, "Seat #{sid} is already allocated on #{occupant_date}"
+        end
+
+        # If no conflict, create seat_allocation
         SeatAllocation.create!(
-          seat_id: seat.id,
-          reservation_id: occupant.is_a?(Reservation) ? occupant.id : nil,
+          seat_id:           seat.id,
+          reservation_id:    occupant.is_a?(Reservation) ? occupant.id : nil,
           waitlist_entry_id: occupant.is_a?(WaitlistEntry) ? occupant.id : nil,
-          allocated_at: allocated_at
+          allocated_at:      allocated_at
         )
       end
     end
 
-    render json: { message: "Seats allocated (occupied) successfully" }, status: :created
+    render json: { message: "Seats allocated for occupant on date #{occupant_date}" }, status: :created
+
+  rescue ActiveRecord::RecordNotFound, ActiveRecord::RecordInvalid => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/reserve
-  # => occupant => "reserved", seats => "reserved"
+  #
+  # occupant => "reserved", create seat_allocations if no conflicts.
   # ------------------------------------------------------------------
   def reserve
     ra_params = params.require(:seat_allocation)
@@ -142,195 +170,174 @@ class SeatAllocationsController < ApplicationController
       return render json: { error: "Must provide occupant_type, occupant_id, seat_ids" }, status: :unprocessable_entity
     end
 
-    occupant = (occupant_type == "reservation") \
-      ? Reservation.find_by(id: occupant_id)
-      : WaitlistEntry.find_by(id: occupant_id)
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
+
     unless occupant
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
+    occupant_date = occupant.is_a?(Reservation) ? occupant.start_time&.to_date : occupant.check_in_time&.to_date
+    if occupant_date.nil?
+      return render json: { error: "Occupant missing date/time field" }, status: :unprocessable_entity
+    end
+
     ActiveRecord::Base.transaction do
-      # Mark occupant “reserved” unless already seated/done
       occupant.update!(status: "reserved") unless %w[seated finished canceled no_show removed].include?(occupant.status)
 
       seat_ids.each do |sid|
         seat = Seat.find_by(id: sid)
-        raise ActiveRecord::Rollback, "Seat #{sid} not found" unless seat
-        raise ActiveRecord::Rollback, "Seat #{sid} not free" unless seat.status == "free"
+        raise ActiveRecord::RecordNotFound, "Seat #{sid} not found" unless seat
 
-        seat.update!(status: "reserved")
+        # Check for conflict
+        conflict = SeatAllocation
+          .joins("LEFT JOIN reservations r ON seat_allocations.reservation_id = r.id")
+          .joins("LEFT JOIN waitlist_entries w ON seat_allocations.waitlist_entry_id = w.id")
+          .where(seat_id: sid, released_at: nil)
+          .where("
+            (reservation_id IS NOT NULL AND DATE(r.start_time) = ?)
+             OR
+            (waitlist_entry_id IS NOT NULL AND DATE(w.check_in_time) = ?)
+          ", occupant_date, occupant_date)
+          .exists?
+
+        if conflict
+          raise ActiveRecord::RecordInvalid, "Seat #{sid} is already allocated on #{occupant_date}"
+        end
+
+        # Create seat_allocation
         SeatAllocation.create!(
-          seat_id: seat.id,
-          reservation_id: occupant.is_a?(Reservation) ? occupant.id : nil,
+          seat_id:           seat.id,
+          reservation_id:    occupant.is_a?(Reservation) ? occupant.id : nil,
           waitlist_entry_id: occupant.is_a?(WaitlistEntry) ? occupant.id : nil,
-          allocated_at: allocated_at
+          allocated_at:      allocated_at
         )
       end
     end
 
-    render json: { message: "Seats reserved successfully" }, status: :created
+    render json: { message: "Seats reserved for date #{occupant_date}" }, status: :created
+
+  rescue ActiveRecord::RecordNotFound, ActiveRecord::RecordInvalid => e
+    render json: { error: e.message }, status: :unprocessable_entity
   end
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/arrive
-  # => occupant => "seated", seats => "occupied"
+  #
+  # occupant => "seated"
+  # Typically you might ensure occupant was "reserved" or "booked".
+  # Then do no changes to seat records, just occupant status + seat_allocation remains.
   # ------------------------------------------------------------------
   def arrive
-    Rails.logger.debug "===== [arrive] params=#{params.inspect}"
-    puts "===== [arrive] params=#{params.inspect}"
-
+    Rails.logger.debug "[arrive] params=#{params.inspect}"
     occ_params = params.permit(:occupant_type, :occupant_id)
+
     occupant_type = occ_params[:occupant_type]
     occupant_id   = occ_params[:occupant_id]
-
     if occupant_type.blank? || occupant_id.blank?
-      Rails.logger.warn "[arrive] occupant_type/occupant_id missing!"
-      puts "[arrive] occupant_type/occupant_id missing!"
       return render json: { error: "Must provide occupant_type, occupant_id" }, status: :unprocessable_entity
     end
 
-    occupant = case occupant_type
-               when "reservation" then Reservation.find_by(id: occupant_id)
-               when "waitlist"    then WaitlistEntry.find_by(id: occupant_id)
-               end
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
     unless occupant
-      Rails.logger.warn "[arrive] occupant not found => occupant_id=#{occupant_id}"
-      puts "[arrive] occupant not found => occupant_id=#{occupant_id}"
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
     ActiveRecord::Base.transaction do
-      Rails.logger.debug ">>> occupant #{occupant.id} => status=#{occupant.status}"
-      puts ">>> occupant #{occupant.id} => status=#{occupant.status}"
-
+      # Example: occupant must be 'reserved' or 'booked' to "arrive"
       if occupant.is_a?(Reservation)
-        unless %w[reserved booked].include?(occupant.status)
-          Rails.logger.warn "[arrive] occupant #{occupant.id} not in reserved/booked"
-          puts "[arrive] occupant #{occupant.id} not in reserved/booked"
-          raise ActiveRecord::Rollback, "Occupant not in reserved/booked state"
-        end
+        raise ActiveRecord::RecordInvalid, "Not in reserved/booked" unless %w[reserved booked].include?(occupant.status)
       else
-        unless %w[waiting reserved].include?(occupant.status)
-          Rails.logger.warn "[arrive] occupant #{occupant.id} not in waiting/reserved"
-          puts "[arrive] occupant #{occupant.id} not in waiting/reserved"
-          raise ActiveRecord::Rollback, "Occupant not in waiting/reserved"
-        end
+        raise ActiveRecord::RecordInvalid, "Not in waiting/reserved" unless %w[waiting reserved].include?(occupant.status)
       end
 
-      occupant_allocs =
-        if occupant_type == "reservation"
-          SeatAllocation.where(reservation_id: occupant.id, released_at: nil)
-        else
-          SeatAllocation.where(waitlist_entry_id: occupant.id, released_at: nil)
-        end
-      Rails.logger.debug "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
-      puts "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
-
-      occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        Rails.logger.debug ">>> occupant #{occupant.id} => seat #{seat.id} checking seat.status=#{seat.status}"
-        puts ">>> occupant #{occupant.id} => seat #{seat.id} checking seat.status=#{seat.status}"
-        raise ActiveRecord::Rollback, "Seat #{seat.id} not reserved" unless seat.status == "reserved"
-        seat.update!(status: "occupied")
-        Rails.logger.debug "... seat #{seat.id} updated to 'occupied'"
-        puts "... seat #{seat.id} updated to 'occupied'"
-      end
-
+      # Mark occupant => seated
       occupant.update!(status: "seated")
-      Rails.logger.debug "... occupant #{occupant.id} updated => 'seated'"
-      puts "... occupant #{occupant.id} updated => 'seated'"
     end
 
-    render json: { message: "Arrived. Seats => occupied, occupant => seated" }, status: :ok
-  rescue => e
-    Rails.logger.error "[arrive] Error => #{e.message}"
-    puts "[arrive] Error => #{e.message}"
+    render json: { message: "Arrived => occupant is now 'seated'" }, status: :ok
+
+  rescue ActiveRecord::RecordInvalid => e
     render json: { error: e.message }, status: :unprocessable_entity
   end
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/no_show
-  # => occupant => "no_show", seats => "free"
+  #
+  # occupant => "no_show"
+  # seat_allocations => set released_at = Time.current
   # ------------------------------------------------------------------
   def no_show
-    Rails.logger.debug "===== [no_show] params=#{params.inspect}"
-    puts "===== [no_show] params=#{params.inspect}"
-
+    Rails.logger.debug "[no_show] params=#{params.inspect}"
     ns_params = params.permit(:occupant_type, :occupant_id)
+
     occupant_type = ns_params[:occupant_type]
     occupant_id   = ns_params[:occupant_id]
-
     if occupant_type.blank? || occupant_id.blank?
-      Rails.logger.warn "[no_show] occupant_type/occupant_id missing!"
-      puts "[no_show] occupant_type/occupant_id missing!"
       return render json: { error: "Must provide occupant_type, occupant_id" }, status: :unprocessable_entity
     end
 
-    occupant = case occupant_type
-               when "reservation" then Reservation.find_by(id: occupant_id)
-               when "waitlist"    then WaitlistEntry.find_by(id: occupant_id)
-               end
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
     unless occupant
-      Rails.logger.warn "[no_show] occupant not found => id=#{occupant_id}"
-      puts "[no_show] occupant not found => id=#{occupant_id}"
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
     ActiveRecord::Base.transaction do
+      # release seat allocations
       occupant_allocs =
         if occupant_type == "reservation"
           SeatAllocation.where(reservation_id: occupant.id, released_at: nil)
         else
           SeatAllocation.where(waitlist_entry_id: occupant.id, released_at: nil)
         end
-      Rails.logger.debug "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
-      puts "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
 
       occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        Rails.logger.debug ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        puts ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        seat.update!(status: "free")
         alloc.update!(released_at: Time.current)
       end
 
       occupant.update!(status: "no_show")
-      Rails.logger.debug "... occupant #{occupant.id} => 'no_show'"
-      puts "... occupant #{occupant.id} => 'no_show'"
     end
 
-    render json: { message: "Marked occupant as no_show; seats => free" }, status: :ok
-  rescue => e
-    Rails.logger.error "[no_show] Error => #{e.message}"
-    puts "[no_show] Error => #{e.message}"
-    render json: { error: e.message }, status: :unprocessable_entity
+    render json: { message: "Occupant => no_show; seat_allocations released" }, status: :ok
   end
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/cancel
-  # => occupant => "canceled", seats => "free"
+  #
+  # occupant => "canceled"
+  # seat_allocations => set released_at = Time.current
   # ------------------------------------------------------------------
   def cancel
-    Rails.logger.debug "===== [cancel] params=#{params.inspect}"
-    puts "===== [cancel] params=#{params.inspect}"
-
+    Rails.logger.debug "[cancel] params=#{params.inspect}"
     c_params = params.permit(:occupant_type, :occupant_id)
+
     occupant_type = c_params[:occupant_type]
     occupant_id   = c_params[:occupant_id]
-
     if occupant_type.blank? || occupant_id.blank?
-      Rails.logger.warn "[cancel] occupant_type/occupant_id missing!"
-      puts "[cancel] occupant_type/occupant_id missing!"
       return render json: { error: "Must provide occupant_type, occupant_id" }, status: :unprocessable_entity
     end
 
-    occupant = case occupant_type
-               when "reservation" then Reservation.find_by(id: occupant_id)
-               when "waitlist"    then WaitlistEntry.find_by(id: occupant_id)
-               end
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
     unless occupant
-      Rails.logger.warn "[cancel] occupant not found => id=#{occupant_id}"
-      puts "[cancel] occupant not found => id=#{occupant_id}"
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
@@ -341,66 +348,47 @@ class SeatAllocationsController < ApplicationController
         else
           SeatAllocation.where(waitlist_entry_id: occupant.id, released_at: nil)
         end
-      Rails.logger.debug "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
-      puts "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
 
       occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        Rails.logger.debug ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        puts ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        seat.update!(status: "free")
         alloc.update!(released_at: Time.current)
       end
 
       occupant.update!(status: "canceled")
-      Rails.logger.debug "... occupant #{occupant.id} => 'canceled'"
-      puts "... occupant #{occupant.id} => 'canceled'"
     end
 
-    render json: { message: "Canceled occupant & freed seats" }, status: :ok
-  rescue => e
-    Rails.logger.error "[cancel] Error => #{e.message}"
-    puts "[cancel] Error => #{e.message}"
-    render json: { error: e.message }, status: :unprocessable_entity
+    render json: { message: "Canceled occupant & freed seat_allocations" }, status: :ok
   end
 
   # ------------------------------------------------------------------
   # DELETE /seat_allocations/:id
-  # => occupant => 'finished'/'removed', seats => 'free'
+  #
+  # A single seat_allocation is destroyed => occupant => "finished"/"removed"
+  # or you can do occupant => "finished" only when ALL seat_allocations are destroyed
+  # by checking occupant_allocs count, etc.
   # ------------------------------------------------------------------
   def destroy
-    Rails.logger.debug "===== [destroy] params=#{params.inspect}"
-    puts "===== [destroy] params=#{params.inspect}"
+    Rails.logger.debug "[destroy] params=#{params.inspect}"
 
     seat_allocation = SeatAllocation.find(params[:id])
     occupant = seat_allocation.reservation || seat_allocation.waitlist_entry
     occupant_type = seat_allocation.reservation_id.present? ? "reservation" : "waitlist"
 
     ActiveRecord::Base.transaction do
-      occupant_allocs =
+      # Mark this seat_allocation as released
+      seat_allocation.update!(released_at: Time.current)
+
+      # Optionally check if occupant has any other seat_allocations left
+      active_allocs =
         if occupant_type == "reservation"
           SeatAllocation.where(reservation_id: occupant.id, released_at: nil)
         else
           SeatAllocation.where(waitlist_entry_id: occupant.id, released_at: nil)
         end
-      Rails.logger.debug ">>> occupant_type=#{occupant_type}, occupant.id=#{occupant.id}, occupant_allocs=#{occupant_allocs.map(&:id)}"
-      puts ">>> occupant_type=#{occupant_type}, occupant.id=#{occupant.id}, occupant_allocs=#{occupant_allocs.map(&:id)}"
 
-      occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        Rails.logger.debug "... seat #{seat.id} => 'free'"
-        puts "... seat #{seat.id} => 'free'"
-        seat.update!(status: "free") 
-        alloc.update!(released_at: Time.current)
+      if active_allocs.none?
+        # Mark occupant as "finished" or "removed" if no seats remain
+        occupant.update!(status: occupant_type == "reservation" ? "finished" : "removed")
       end
-
-      if occupant_type == "reservation"
-        occupant.update!(status: "finished")
-      else
-        occupant.update!(status: "removed")
-      end
-      Rails.logger.debug "... occupant #{occupant.id} => '#{occupant.status}'"
-      puts "... occupant #{occupant.id} => '#{occupant.status}'"
     end
 
     head :no_content
@@ -408,29 +396,27 @@ class SeatAllocationsController < ApplicationController
 
   # ------------------------------------------------------------------
   # POST /seat_allocations/finish
-  # => occupant => "finished"/"removed", seats => "free"
+  #
+  # occupant => "finished"/"removed"
+  # releases all occupant seat_allocations
   # ------------------------------------------------------------------
   def finish
-    Rails.logger.debug "===== [finish] params=#{params.inspect}"
-    puts "===== [finish] params=#{params.inspect}"
-
+    Rails.logger.debug "[finish] params=#{params.inspect}"
     f_params = params.permit(:occupant_type, :occupant_id)
+
     occupant_type = f_params[:occupant_type]
     occupant_id   = f_params[:occupant_id]
-
     if occupant_type.blank? || occupant_id.blank?
-      Rails.logger.warn "[finish] occupant_type/occupant_id missing!"
-      puts "[finish] occupant_type/occupant_id missing!"
       return render json: { error: "Must provide occupant_type, occupant_id" }, status: :unprocessable_entity
     end
 
-    occupant = case occupant_type
-               when "reservation" then Reservation.find_by(id: occupant_id)
-               when "waitlist"    then WaitlistEntry.find_by(id: occupant_id)
-               end
+    occupant =
+      if occupant_type == "reservation"
+        Reservation.find_by(id: occupant_id)
+      else
+        WaitlistEntry.find_by(id: occupant_id)
+      end
     unless occupant
-      Rails.logger.warn "[finish] occupant not found => id=#{occupant_id}"
-      puts "[finish] occupant not found => id=#{occupant_id}"
       return render json: { error: "Could not find occupant" }, status: :not_found
     end
 
@@ -441,30 +427,16 @@ class SeatAllocationsController < ApplicationController
         else
           SeatAllocation.where(waitlist_entry_id: occupant.id, released_at: nil)
         end
-      Rails.logger.debug "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
-      puts "... occupant_allocs => #{occupant_allocs.map(&:id)} seats => #{occupant_allocs.map(&:seat_id)}"
 
       occupant_allocs.each do |alloc|
-        seat = alloc.seat
-        Rails.logger.debug ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        puts ">>> occupant #{occupant.id} => freeing seat #{seat.id}"
-        seat.update!(status: "free")
         alloc.update!(released_at: Time.current)
       end
 
-      if occupant_type == "reservation"
-        occupant.update!(status: "finished")
-      else
-        occupant.update!(status: "removed")
-      end
-      Rails.logger.debug "... occupant #{occupant.id} => '#{occupant.status}'"
-      puts "... occupant #{occupant.id} => '#{occupant.status}'"
+      # occupant => "finished" or "removed"
+      new_status = occupant_type == "reservation" ? "finished" : "removed"
+      occupant.update!(status: new_status)
     end
 
-    render json: { message: "Occupant finished; seats freed" }, status: :ok
-  rescue => e
-    Rails.logger.error "[finish] Error => #{e.message}"
-    puts "[finish] Error => #{e.message}"
-    render json: { error: e.message }, status: :unprocessable_entity
+    render json: { message: "Occupant => #{occupant.status}; seats released" }, status: :ok
   end
 end
