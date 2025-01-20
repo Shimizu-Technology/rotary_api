@@ -20,6 +20,7 @@ Rails.application.routes.draw do
       post :arrive
       post :no_show
       post :cancel
+      post :finish
     end
   end
 
