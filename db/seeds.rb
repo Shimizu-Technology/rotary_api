@@ -56,7 +56,7 @@ end
 puts "Created Regular User: #{regular_user.email} / password"
 
 # ------------------------------------------------------------------------------
-# 3) LAYOUT / SEATS
+# 3) LAYOUT / SEAT SECTIONS / SEATS
 # ------------------------------------------------------------------------------
 main_layout = Layout.find_or_create_by!(
   name: "Main Sushi Layout",
@@ -68,7 +68,8 @@ bar_section = SeatSection.find_or_create_by!(
   layout_id: main_layout.id,
   name:      "Sushi Bar Front",
   offset_x:  100,
-  offset_y:  100
+  offset_y:  100,
+  orientation: "horizontal"
 )
 
 # Ensure we have 6 seats total
@@ -87,22 +88,47 @@ restaurant.update!(current_layout_id: main_layout.id)
 puts "Set '#{main_layout.name}' as the current layout for Restaurant #{restaurant.id}."
 
 # ------------------------------------------------------------------------------
-# 4) RESERVATIONS THAT FIT 6 SEATS
+# 4) BUILD sections_data JSON so Layout tab can display them
+# ------------------------------------------------------------------------------
+# We'll build a single "section" in the JSON to mirror bar_section + its seats
+bar_section.reload  # ensure we have the latest seats
+section_hash = {
+  "id" => "section-bar-front",   # can be any unique string/uuid
+  "name" => bar_section.name,
+  "type" => bar_section.section_type.presence || "counter",  # or "bar"
+  "offsetX" => bar_section.offset_x,
+  "offsetY" => bar_section.offset_y,
+  "orientation" => bar_section.orientation.presence || "horizontal",
+  "seats" => bar_section.seats.map do |s|
+    {
+      "label" => s.label,
+      "capacity" => s.capacity,
+      "position_x" => s.position_x,
+      "position_y" => s.position_y
+    }
+  end
+}
+new_sections_data = { "sections" => [ section_hash ] }
+
+main_layout.update!(sections_data: new_sections_data)
+puts "Updated Layout##{main_layout.id} sections_data with 1 seat section + 6 seats."
+
+# ------------------------------------------------------------------------------
+# 5) RESERVATIONS THAT FIT 6 SEATS
 # ------------------------------------------------------------------------------
 puts "Creating sample Reservations that won't exceed 6 seats..."
 
-# Helper: pick some times within 17:00-21:00
-now_chamorro = Time.zone.now.change(hour: 17, min: 0) # e.g., "today at 5pm local"
+# Helper: pick some times within 17:00-21:00 local
+now_chamorro = Time.zone.now.change(hour: 17, min: 0) # "today at 5pm local"
 today_17 = now_chamorro
 today_18 = now_chamorro + 1.hour
 today_19 = now_chamorro + 2.hours
 tomorrow_17 = today_17 + 1.day
 
 reservation_data = [
-  # We'll ensure no overlap that exceeds 6 seats at the same time
   { name: "Leon Shimizu",    start_time: today_17,    party_size: 2, status: "booked" },
   { name: "Kami Shimizu",    start_time: today_17,    party_size: 3, status: "booked" },
-    # total 5 seats at 17:00 => still 1 seat free
+  # total 5 seats at 17:00 => 1 seat free
   { name: "Group of 2",      start_time: today_18,    party_size: 2, status: "booked" },
   { name: "Late Night Duo",  start_time: today_19,    party_size: 2, status: "booked" },
   { name: "Tomorrow Group",  start_time: tomorrow_17, party_size: 4, status: "booked" },
@@ -119,14 +145,14 @@ reservation_data.each do |res_data|
     res.contact_phone = "671-#{rand(100..999)}-#{rand(1000..9999)}"
     res.contact_email = "#{res_data[:name].parameterize}@example.com"
     res.status        = res_data[:status]
-    # NEW: ensure end_time is start_time + 1 hour
+    # ensure end_time is start_time + 1 hour
     res.end_time      = res_data[:start_time] + 60.minutes
   end
 end
 puts "Reservations seeded."
 
 # ------------------------------------------------------------------------------
-# 5) WAITLIST ENTRIES
+# 6) WAITLIST ENTRIES
 # ------------------------------------------------------------------------------
 puts "Creating sample Waitlist Entries..."
 
@@ -149,7 +175,7 @@ end
 puts "Waitlist entries seeded."
 
 # ------------------------------------------------------------------------------
-# 6) MENUS & MENU ITEMS
+# 7) MENUS & MENU ITEMS
 # ------------------------------------------------------------------------------
 main_menu = Menu.find_or_create_by!(
   name: "Main Menu",
