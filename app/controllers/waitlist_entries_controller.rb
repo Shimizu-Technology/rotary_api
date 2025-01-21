@@ -1,4 +1,5 @@
 # app/controllers/waitlist_entries_controller.rb
+
 class WaitlistEntriesController < ApplicationController
   before_action :authorize_request
 
@@ -8,17 +9,29 @@ class WaitlistEntriesController < ApplicationController
       return render json: { error: "Forbidden: staff/admin only" }, status: :forbidden
     end
 
-    # Possibly scope to the current user's restaurant
     scope = WaitlistEntry.where(restaurant_id: current_user.restaurant_id)
 
-    # If ?date=YYYY-MM-DD is given, filter by date(check_in_time)
+    # If ?date=YYYY-MM-DD is given, filter by local date for check_in_time
     if params[:date].present?
       begin
         date_filter = Date.parse(params[:date])
-        scope = scope.where("DATE(check_in_time) = ?", date_filter)
+
+        restaurant = Restaurant.find(current_user.restaurant_id)
+        tz = restaurant.time_zone.presence || "Pacific/Guam"
+
+        start_local = Time.use_zone(tz) do
+          Time.zone.local(date_filter.year, date_filter.month, date_filter.day, 0, 0, 0)
+        end
+        end_local = start_local.end_of_day
+
+        start_utc = start_local.utc
+        end_utc   = end_local.utc
+
+        # Show waitlist entries whose check_in_time is in [start_utc..end_utc)
+        scope = scope.where("check_in_time >= ? AND check_in_time < ?", start_utc, end_utc)
       rescue ArgumentError
         Rails.logger.warn "[WaitlistEntriesController#index] invalid date param=#{params[:date]}"
-        # scope = scope.none
+        # optionally: scope = scope.none
       end
     end
 

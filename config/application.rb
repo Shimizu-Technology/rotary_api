@@ -11,8 +11,11 @@ module RotaryReservationsApi
     # Initialize configuration defaults for originally generated Rails version.
     config.load_defaults 7.2
 
-    # Set the time zone to Guam
+    # This ensures that Time.zone = 'Pacific/Guam' throughout your app:
     config.time_zone = "Pacific/Guam"
+
+    # But store all DB times in UTC:
+    config.active_record.default_timezone = :utc
 
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.

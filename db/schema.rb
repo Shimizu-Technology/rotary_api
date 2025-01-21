@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.2].define(version: 2025_01_20_140918) do
+ActiveRecord::Schema[7.2].define(version: 2025_01_21_054707) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "plpgsql"
 
@@ -83,6 +83,7 @@ ActiveRecord::Schema[7.2].define(version: 2025_01_20_140918) do
     t.time "opening_time"
     t.time "closing_time"
     t.integer "time_slot_interval", default: 30
+    t.string "time_zone", default: "Pacific/Guam", null: false
     t.index ["current_layout_id"], name: "index_restaurants_on_current_layout_id"
   end
 

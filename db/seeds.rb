@@ -23,14 +23,20 @@ restaurant = Restaurant.find_or_create_by!(
   address: "744 N Marine Corps Dr, Harmon Industrial Park, 96913, Guam",
   layout_type: "sushi bar"
 )
+
+# If your migration has a default, this line isn’t strictly required.
+# But if you want to ensure it’s set to Guam, do this:
 restaurant.update!(
   opening_time:        Time.parse("17:00"),  # 5:00 pm
   closing_time:        Time.parse("21:00"),  # 9:00 pm
-  time_slot_interval:  30                   # e.g., every 30 mins in /availability
+  time_slot_interval:  30,                  # e.g., every 30 mins in /availability
+  time_zone:           "Pacific/Guam"       # <-- NEW: set the restaurant's time_zone
 )
+
 puts "Created/found Restaurant: #{restaurant.name}"
 puts "   open from #{restaurant.opening_time.strftime("%H:%M")} to #{restaurant.closing_time.strftime("%H:%M")}"
 puts "   time_slot_interval: #{restaurant.time_slot_interval} mins"
+puts "   time_zone: #{restaurant.time_zone}"
 
 # ------------------------------------------------------------------------------
 # 2) USERS
@@ -90,10 +96,9 @@ puts "Set '#{main_layout.name}' as the current layout for Restaurant #{restauran
 # ------------------------------------------------------------------------------
 # 4) BUILD sections_data JSON so Layout tab can display them
 # ------------------------------------------------------------------------------
-# We'll build a single "section" in the JSON to mirror bar_section + its seats
 bar_section.reload  # ensure we have the latest seats
 section_hash = {
-  "id" => "section-bar-front",   # can be any unique string/uuid
+  "id" => "section-bar-front",   # a unique string/uuid
   "name" => bar_section.name,
   "type" => bar_section.section_type.presence || "counter",  # or "bar"
   "offsetX" => bar_section.offset_x,
@@ -101,10 +106,10 @@ section_hash = {
   "orientation" => bar_section.orientation.presence || "horizontal",
   "seats" => bar_section.seats.map do |s|
     {
-      "label" => s.label,
-      "capacity" => s.capacity,
-      "position_x" => s.position_x,
-      "position_y" => s.position_y
+      "label"       => s.label,
+      "capacity"    => s.capacity,
+      "position_x"  => s.position_x,
+      "position_y"  => s.position_y
     }
   end
 }
@@ -119,11 +124,12 @@ puts "Updated Layout##{main_layout.id} sections_data with 1 seat section + 6 sea
 puts "Creating sample Reservations that won't exceed 6 seats..."
 
 # Helper: pick some times within 17:00-21:00 local
+# If config.time_zone=UTC, these times might store as UTC. If time_zone=Guam, they'll store in local time. 
 now_chamorro = Time.zone.now.change(hour: 17, min: 0) # "today at 5pm local"
-today_17 = now_chamorro
-today_18 = now_chamorro + 1.hour
-today_19 = now_chamorro + 2.hours
-tomorrow_17 = today_17 + 1.day
+today_17     = now_chamorro
+today_18     = now_chamorro + 1.hour
+today_19     = now_chamorro + 2.hours
+tomorrow_17  = today_17 + 1.day
 
 reservation_data = [
   { name: "Leon Shimizu",    start_time: today_17,    party_size: 2, status: "booked" },
