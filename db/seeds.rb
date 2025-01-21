@@ -10,31 +10,36 @@ puts "== (Optional) Cleaning references =="
 # Uncomment to truncate tables and reset IDs if needed:
 # ActiveRecord::Base.connection.execute("
 #   TRUNCATE reservations, waitlist_entries, users, restaurants, menus, menu_items,
-#   layouts, seat_sections, seats, seat_allocations RESTART IDENTITY CASCADE
+#     layouts, seat_sections, seats, seat_allocations RESTART IDENTITY CASCADE
 # ")
 
 puts "== Seeding the database =="
 
-# 1) Restaurant
+# ------------------------------------------------------------------------------
+# 1) RESTAURANT
+# ------------------------------------------------------------------------------
 restaurant = Restaurant.find_or_create_by!(
   name: "Rotary Sushi",
   address: "744 N Marine Corps Dr, Harmon Industrial Park, 96913, Guam",
   layout_type: "sushi bar"
 )
-# Now update opening_time/closing_time to 5pm → 9pm
 restaurant.update!(
-  opening_time:  Time.parse("17:00"),  # 5:00 pm
-  closing_time:  Time.parse("21:00")   # 9:00 pm
+  opening_time:        Time.parse("17:00"),  # 5:00 pm
+  closing_time:        Time.parse("21:00"),  # 9:00 pm
+  time_slot_interval:  30                   # e.g., every 30 mins in /availability
 )
-puts "Created/found Restaurant: #{restaurant.name} (open from #{restaurant.opening_time.strftime("%H:%M")} to #{restaurant.closing_time.strftime("%H:%M")})"
+puts "Created/found Restaurant: #{restaurant.name}"
+puts "   open from #{restaurant.opening_time.strftime("%H:%M")} to #{restaurant.closing_time.strftime("%H:%M")}"
+puts "   time_slot_interval: #{restaurant.time_slot_interval} mins"
 
-# 2) Users
+# ------------------------------------------------------------------------------
+# 2) USERS
+# ------------------------------------------------------------------------------
 admin_user = User.find_or_create_by!(email: "admin@example.com") do |u|
   u.first_name = "Admin"
   u.last_name  = "User"
   u.phone      = "671-123-9999"
   u.password   = "password"
-  u.password_confirmation = "password"
   u.role       = "admin"
   u.restaurant_id = restaurant.id
 end
@@ -45,50 +50,90 @@ regular_user = User.find_or_create_by!(email: "user@example.com") do |u|
   u.last_name  = "User"
   u.phone      = "671-555-1111"
   u.password   = "password"
-  u.password_confirmation = "password"
-  u.role       = "customer"
+  u.role       = "customer"   # or 'staff'
   u.restaurant_id = restaurant.id
 end
 puts "Created Regular User: #{regular_user.email} / password"
 
-# 3) Reservations
-puts "Creating sample Reservations across multiple days and times..."
+# ------------------------------------------------------------------------------
+# 3) LAYOUT / SEATS
+# ------------------------------------------------------------------------------
+main_layout = Layout.find_or_create_by!(
+  name: "Main Sushi Layout",
+  restaurant_id: restaurant.id
+)
+
+# Single seat section for demonstration
+bar_section = SeatSection.find_or_create_by!(
+  layout_id: main_layout.id,
+  name:      "Sushi Bar Front",
+  offset_x:  100,
+  offset_y:  100
+)
+
+# Ensure we have 6 seats total
+6.times do |i|
+  seat_label = "Seat ##{i+1}"
+  Seat.find_or_create_by!(seat_section_id: bar_section.id, label: seat_label) do |seat|
+    seat.position_x = 0
+    seat.position_y = 60 * i
+    seat.capacity   = 1
+  end
+end
+puts "Created seats for Sushi Bar Front."
+
+# Make the main_layout the "active" layout
+restaurant.update!(current_layout_id: main_layout.id)
+puts "Set '#{main_layout.name}' as the current layout for Restaurant #{restaurant.id}."
+
+# ------------------------------------------------------------------------------
+# 4) RESERVATIONS THAT FIT 6 SEATS
+# ------------------------------------------------------------------------------
+puts "Creating sample Reservations that won't exceed 6 seats..."
+
+# Helper: pick some times within 17:00-21:00
+now_chamorro = Time.zone.now.change(hour: 17, min: 0) # e.g., "today at 5pm local"
+today_17 = now_chamorro
+today_18 = now_chamorro + 1.hour
+today_19 = now_chamorro + 2.hours
+tomorrow_17 = today_17 + 1.day
 
 reservation_data = [
-  { name: "Leon Shimizu",       time: Time.current + 1.day,           party_size: 2, status: "booked" },
-  { name: "Kami Shimizu",       time: Time.current + 2.days,          party_size: 4, status: "booked" },
-  { name: "Dinner Group",       time: Time.current + 2.hours,         party_size: 5, status: "booked" },
-  { name: "Late Nighter",       time: Time.current + 12.hours,        party_size: 3, status: "booked" },
-  { name: "Weekend Brunch",     time: Time.current + 5.days + 10.hours, party_size: 6, status: "booked" },
-  { name: "Family Gathering",   time: Time.current + 3.days + 8.hours,  party_size: 8, status: "booked" },
-  { name: "Early Bird Special", time: Time.current + 7.hours,         party_size: 2, status: "booked" },
-  { name: "Canceled Example",   time: Time.current + 1.day,           party_size: 2, status: "canceled" },
-  { name: "No-Show Example",    time: Time.current - 1.day,           party_size: 3, status: "no_show" },
-  { name: "Finished Party",     time: Time.current - 2.days,          party_size: 4, status: "finished" }
+  # We'll ensure no overlap that exceeds 6 seats at the same time
+  { name: "Leon Shimizu",    start_time: today_17,    party_size: 2, status: "booked" },
+  { name: "Kami Shimizu",    start_time: today_17,    party_size: 3, status: "booked" },
+    # total 5 seats at 17:00 => still 1 seat free
+  { name: "Group of 2",      start_time: today_18,    party_size: 2, status: "booked" },
+  { name: "Late Night Duo",  start_time: today_19,    party_size: 2, status: "booked" },
+  { name: "Tomorrow Group",  start_time: tomorrow_17, party_size: 4, status: "booked" },
+  { name: "Canceled Ex.",    start_time: tomorrow_17, party_size: 2, status: "canceled" },
 ]
 
 reservation_data.each do |res_data|
   Reservation.find_or_create_by!(
     restaurant_id: restaurant.id,
     contact_name:  res_data[:name],
-    start_time:    res_data[:time]
+    start_time:    res_data[:start_time]
   ) do |res|
     res.party_size    = res_data[:party_size]
     res.contact_phone = "671-#{rand(100..999)}-#{rand(1000..9999)}"
     res.contact_email = "#{res_data[:name].parameterize}@example.com"
     res.status        = res_data[:status]
+    # NEW: ensure end_time is start_time + 1 hour
+    res.end_time      = res_data[:start_time] + 60.minutes
   end
 end
 puts "Reservations seeded."
 
-# 4) WaitlistEntries
-puts "Creating sample Waitlist Entries for the current day..."
+# ------------------------------------------------------------------------------
+# 5) WAITLIST ENTRIES
+# ------------------------------------------------------------------------------
+puts "Creating sample Waitlist Entries..."
 
 waitlist_data = [
-  { name: "Walk-in Joe",       time: Time.current,               party_size: 3, status: "waiting" },
-  { name: "Party of Six",      time: Time.current - 30.minutes,  party_size: 6, status: "waiting" },
-  { name: "Seated Sarah",      time: Time.current - 1.hour,      party_size: 2, status: "seated" },
-  { name: "Afternoon Visitor", time: Time.current - 3.hours,     party_size: 4, status: "seated" }
+  { name: "Walk-in Joe",       time: Time.zone.now,          party_size: 3, status: "waiting" },
+  { name: "Party of Six",      time: Time.zone.now - 30*60,  party_size: 6, status: "waiting" },
+  { name: "Seated Sarah",      time: Time.zone.now - 1.hour, party_size: 2, status: "seated" }
 ]
 
 waitlist_data.each do |wl_data|
@@ -103,43 +148,12 @@ waitlist_data.each do |wl_data|
 end
 puts "Waitlist entries seeded."
 
-# 5) Layout, Seat Sections, Seats
-puts "Creating Layouts & Seats..."
-
-main_layout = Layout.find_or_create_by!(
-  name: "Main Sushi Layout",
-  restaurant_id: restaurant.id
-)
-
-# A single seat section for demonstration
-bar_section = SeatSection.find_or_create_by!(
-  layout_id: main_layout.id,
-  name: "Sushi Bar Front",
-  offset_x: 100,
-  offset_y: 100
-)
-
-# Create 6 sample seats
-(1..6).each do |i|
-  Seat.find_or_create_by!(
-    seat_section_id: bar_section.id,
-    label: "Seat ##{i}",
-    position_x: 0,
-    position_y: 60 * (i - 1)
-  ) do |s|
-    s.capacity = 1
-  end
-end
-puts "Created seats for Sushi Bar Front."
-
-# Make the main_layout the "active" layout
-restaurant.update!(current_layout_id: main_layout.id)
-puts "Set '#{main_layout.name}' as the current layout for Restaurant #{restaurant.id}."
-
-# 6) Main Menu & MenuItems
+# ------------------------------------------------------------------------------
+# 6) MENUS & MENU ITEMS
+# ------------------------------------------------------------------------------
 main_menu = Menu.find_or_create_by!(
   name: "Main Menu",
-  restaurant: restaurant
+  restaurant_id: restaurant.id
 )
 main_menu.update!(active: true)
 
@@ -150,28 +164,24 @@ if main_menu.menu_items.empty?
     price: 3.50,
     menu: main_menu
   )
-
   MenuItem.create!(
     name: "Tuna Roll",
-    description: "Classic tuna roll (6 pieces).",
+    description: "Classic tuna roll (6 pieces)",
     price: 5.00,
     menu: main_menu
   )
-
   MenuItem.create!(
     name: "Dragon Roll",
     description: "Eel, cucumber, avocado on top",
     price: 12.00,
     menu: main_menu
   )
-
   MenuItem.create!(
     name: "Tempura Udon",
     description: "Udon noodle soup with shrimp tempura",
     price: 10.50,
     menu: main_menu
   )
-
   puts "Created sample menu items on the main menu."
 else
   puts "Main Menu items already exist."
