@@ -61,6 +61,32 @@ Rails.application.configure do
 
   # Disable caching for Action Mailer templates even if Action Controller
   # caching is enabled.
+
+  # Raise errors if emails fail in production (optional).
+  config.action_mailer.raise_delivery_errors = true
+
+  # Use SMTP for SendGrid.
+  config.action_mailer.delivery_method = :smtp
+  config.action_mailer.smtp_settings = {
+    user_name: 'apikey',                # This is required by SendGrid
+    password:  ENV['SENDGRID_API_KEY'], # Make sure you set this in Render/Heroku/wherever
+    domain:    'rotary-sushi.netlify.app', 
+      # or your own custom domain if you have one
+    address:   'smtp.sendgrid.net',
+    port:      587,
+    authentication: :plain,
+    enable_starttls_auto: true
+  }
+
+  # Where mailer-generated links (like password resets) should point.
+  # Typically, you'd use your production frontend host if that's where
+  # users land to confirm or reset password, etc.
+  config.action_mailer.default_url_options = {
+    host:     'rotary-sushi.netlify.app',
+    protocol: 'https'  # ensures links are https://...
+  }
+
+  # Disable caching for Action Mailer templates even if you have caching on.
   config.action_mailer.perform_caching = false
 
   # If you want to see errors for bad email addresses:
