@@ -16,5 +16,8 @@ test:
   database: rotary_reservations_test
 
 production:
-  <<: *default
-  database: rotary_reservations_prod
+  adapter: postgresql
+  encoding: unicode
+  url: <%= ENV["DATABASE_URL"] %>
+  pool: 5
+

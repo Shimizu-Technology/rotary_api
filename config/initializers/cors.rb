@@ -1,8 +1,7 @@
 # config/initializers/cors.rb
 Rails.application.config.middleware.insert_before 0, Rack::Cors do
   allow do
-    # Allow requests from your React dev server origin
-    origins 'http://localhost:5173'
+    origins ENV.fetch('FRONTEND_URL', 'http://localhost:5173')
 
     resource '*',
       headers: :any,
