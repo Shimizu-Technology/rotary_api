@@ -9,7 +9,7 @@ gem 'rack-cors', require: 'rack/cors'
 # Authentication
 gem 'bcrypt', '~> 3.1.7'
 # Authentication
-gem 'jwt', '~> 2.2'
+gem 'jwt', '~> 3.0'
 # Create fake data
 gem 'faker'
 # Allow rails to use the .env file
